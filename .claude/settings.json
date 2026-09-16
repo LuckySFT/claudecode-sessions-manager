@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./**/.env)",
+      "Read(./**/.env.*)",
+      "Read(./secrets/**)",
+      "Read(./**/id_rsa)",
+      "Read(./**/id_ed25519)",
+      "Read(./**/*.pem)",
+      "Read(./**/*.key)",
+      "Read(./**/credentials.json)",
+      "Read(./**/.aws/**)",
+      "Read(./**/.ssh/**)",
+
+      "Bash(cat *.env*)",
+      "Bash(less *.env*)",
+      "Bash(more *.env*)",
+      "Bash(head *.env*)",
+      "Bash(tail *.env*)",
+      "Bash(grep *.env*)"
+    ],
+    "allow": [
+      "Bash(dig:*)",
+      "Bash(nslookup:*)"
+    ],
+    "ask": [
+      "Bash(curl:*)",
+      "Bash(wget:*)",
+      "WebFetch",
+
+      "Bash(git push:*)",
+      "Bash(git commit:*)",
+      "Bash(rm:*)",
+      "Bash(rm -rf:*)"
+    ],
+    "defaultMode": "default"
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Read|Edit|Write|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/protect-env.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

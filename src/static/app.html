@@ -1,0 +1,1447 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude Code Session 管理</title>
+<style>
+/* ── 色票 ─────────────────────────────────
+   淺色定義在裸 :root，深色只覆寫同一組變數。
+   三種狀態：手動 light / 手動 dark / 跟隨系統。
+   任何顏色都不能只定義在 media query 裡，否則手動切換會缺值。 */
+:root {
+  --bg: #f6f6f4;
+  --bg-2: #ffffff;
+  --bg-3: #e9e8e3;
+  --line: #d6d4ce;
+  --fg: #23242a;
+  --fg-dim: #565b64;
+  --fg-faint: #868b94;
+  --accent: #9a6634;
+  --accent-dim: #c8a57c;
+  --accent-on: #ffffff;
+  --user: #2c5c96;
+  --assistant: #3a6b35;
+  --thinking: #67488a;
+  --tool: #8a6a0f;
+  --danger: #b23a3a;
+  --mark-bg: #ffe6a3;
+  --mark-fg: #4a3800;
+  --blk-user: #eef3fb;
+  --blk-assistant: #eef5ed;
+  --blk-thinking: #f3eef7;
+
+  --mono: "Cascadia Code", "Consolas", "Sarasa Mono TC", ui-monospace, monospace;
+  --sans: "Inter", "Noto Sans TC", "Microsoft JhengHei", system-ui, sans-serif;
+
+  /* 可調參數，由 JS 覆寫並存進 localStorage */
+  --fs: 13px;
+  --col1: 232px;
+  --col2: 400px;
+  --blk-max: 340px;
+}
+:root[data-theme="dark"] {
+  --bg: #16171b;
+  --bg-2: #1d1f24;
+  --bg-3: #24272e;
+  --line: #33363f;
+  --fg: #e3e5ea;
+  --fg-dim: #9aa0ac;
+  --fg-faint: #6b7280;
+  --accent: #d0a17a;
+  --accent-dim: #7d6349;
+  --accent-on: #ffffff;
+  --user: #7aa2d6;
+  --assistant: #8fbf87;
+  --thinking: #a98fc4;
+  --tool: #c9a227;
+  --danger: #d47a7a;
+  --mark-bg: #5c4a1f;
+  --mark-fg: #ffe9a8;
+  --blk-user: #1a2130;
+  --blk-assistant: #1a231b;
+  --blk-thinking: #201a26;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #16171b;
+    --bg-2: #1d1f24;
+    --bg-3: #24272e;
+    --line: #33363f;
+    --fg: #e3e5ea;
+    --fg-dim: #9aa0ac;
+    --fg-faint: #6b7280;
+    --accent: #d0a17a;
+    --accent-dim: #7d6349;
+    --accent-on: #ffffff;
+    --user: #7aa2d6;
+    --assistant: #8fbf87;
+    --thinking: #a98fc4;
+    --tool: #c9a227;
+    --danger: #d47a7a;
+    --mark-bg: #5c4a1f;
+    --mark-fg: #ffe9a8;
+    --blk-user: #1a2130;
+    --blk-assistant: #1a231b;
+    --blk-thinking: #201a26;
+  }
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--bg); color: var(--fg);
+  font: var(--fs)/1.55 var(--sans);
+  display: grid; grid-template-rows: auto 1fr;
+  overflow: hidden;
+}
+button, input, select { font: inherit; color: inherit; }
+
+/* ── 頂部 ───────────────────────────────── */
+header {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 12px; background: var(--bg-2);
+  border-bottom: 1px solid var(--line); flex-wrap: wrap;
+}
+header h1 {
+  font-size: var(--fs); font-weight: 600; margin: 0;
+  letter-spacing: .02em; white-space: nowrap;
+}
+header h1 span { color: var(--accent); }
+#searchbox { flex: 1; display: flex; gap: 6px; align-items: center; min-width: 260px; }
+#q {
+  flex: 1; min-width: 120px; background: var(--bg);
+  border: 1px solid var(--line); border-radius: 5px;
+  padding: 5px 9px; font-family: var(--mono);
+}
+#q:focus { outline: none; border-color: var(--accent); }
+.btn {
+  background: var(--bg-3); border: 1px solid var(--line);
+  border-radius: 5px; padding: 4px 9px; cursor: pointer; white-space: nowrap;
+}
+.btn:hover { border-color: var(--accent); color: var(--accent); }
+.btn.on { background: var(--accent); border-color: var(--accent); color: var(--accent-on); }
+.btn:disabled { opacity: .45; cursor: default; }
+.btn.sm { padding: 2px 6px; font-size: .85em; }
+.group { display: flex; gap: 3px; align-items: center; }
+.stats {
+  color: var(--fg-faint); font-family: var(--mono);
+  font-size: .84em; white-space: nowrap; line-height: 1.3;
+}
+.stats b { color: var(--fg-dim); font-weight: 600; }
+.stats .bad { color: var(--danger); }
+
+/* ── 三欄 + 可拖曳分隔 ─────────────────────── */
+main {
+  display: grid;
+  grid-template-columns: var(--col1) 5px var(--col2) 5px 1fr;
+  min-height: 0;
+}
+main > section { min-height: 0; overflow-y: auto; }
+.gutter {
+  cursor: col-resize; background: var(--line);
+  opacity: .55; transition: opacity .12s, background .12s;
+}
+.gutter:hover, .gutter.dragging { opacity: 1; background: var(--accent); }
+body.resizing { cursor: col-resize; user-select: none; }
+
+.pane-head {
+  position: sticky; top: 0; background: var(--bg-2); z-index: 2;
+  padding: 5px 9px; border-bottom: 1px solid var(--line);
+  display: flex; gap: 5px; align-items: center; flex-wrap: wrap;
+  font-size: .85em; color: var(--fg-dim);
+}
+.pane-head strong { color: var(--fg); font-size: .95em; }
+.pane-head .sep { flex: 1; }
+
+/* 專案清單 */
+.proj {
+  padding: 5px 9px; cursor: pointer; border-bottom: 1px solid var(--line);
+  display: grid; grid-template-columns: 1fr auto; gap: 2px 6px;
+}
+.proj:hover { background: var(--bg-3); }
+.proj.on { background: var(--bg-3); box-shadow: inset 2px 0 0 var(--accent); }
+.proj .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.proj .size { font-family: var(--mono); font-size: .78em; color: var(--fg-faint); }
+.proj .sub {
+  grid-column: 1 / -1; font-size: .78em; color: var(--fg-faint);
+  font-family: var(--mono); display: flex; gap: 6px; flex-wrap: wrap;
+}
+
+/* 清單列 */
+.row { padding: 6px 9px; cursor: pointer; border-bottom: 1px solid var(--line); }
+.row:hover { background: var(--bg-3); }
+.row.on { background: var(--bg-3); box-shadow: inset 2px 0 0 var(--accent); }
+.row .t1 { display: flex; gap: 8px; align-items: baseline; }
+.row .title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row .when { font-family: var(--mono); font-size: .78em; color: var(--fg-faint); }
+.row .t2 {
+  font-family: var(--mono); font-size: .78em; color: var(--fg-faint);
+  margin-top: 2px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+}
+.row .snip {
+  font-family: var(--mono); font-size: .86em; color: var(--fg-dim);
+  margin-top: 3px; white-space: pre-wrap; word-break: break-all;
+  max-height: 3.4em; overflow: hidden;
+}
+mark { background: var(--mark-bg); color: var(--mark-fg); border-radius: 2px; padding: 0 1px; }
+
+.tag {
+  font-family: var(--mono); font-size: .78em; padding: 0 4px;
+  border-radius: 3px; border: 1px solid var(--line); white-space: nowrap;
+}
+.tag.user { color: var(--user); }
+.tag.assistant { color: var(--assistant); }
+.tag.thinking { color: var(--thinking); }
+.tag.tool_use, .tag.tool_result { color: var(--tool); }
+.tag.attachment { color: var(--fg-dim); }
+.tag.subagent { color: var(--accent); border-color: var(--accent-dim); }
+.tag.redacted, .tag.gone { color: var(--danger); border-color: var(--danger); }
+.tag.soon { color: var(--tool); border-color: var(--tool); }
+.tag.renamed { color: var(--accent); border-color: var(--accent-dim); }
+.tag.hiddenmark { color: var(--fg-faint); border-style: dashed; }
+.row.is-hidden .title { opacity: .55; text-decoration: line-through; }
+
+/* 標題就地編輯 */
+.title-edit {
+  display: flex; gap: 6px; align-items: center; margin: 0 0 6px;
+}
+.title-edit input {
+  flex: 1; background: var(--bg); border: 1px solid var(--accent);
+  border-radius: 4px; padding: 3px 7px; font-size: 1.05em; font-weight: 600;
+}
+.meta h2 { display: flex; gap: 7px; align-items: baseline; }
+.meta h2 .t { flex: 1; }
+.tag.saved { color: var(--assistant); border-color: var(--assistant); }
+.tag.unsaved { color: var(--fg-faint); border-style: dashed; }
+
+/* 詳細 */
+#detail { padding: 0 0 40vh; }
+.meta {
+  padding: 9px 12px; border-bottom: 1px solid var(--line);
+  background: var(--bg-2); position: sticky; top: 0; z-index: 2;
+}
+.meta h2 { margin: 0 0 5px; font-size: 1.08em; font-weight: 600; }
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: 1px 10px;
+      font-family: var(--mono); font-size: .84em; margin: 0; }
+.kv dt { color: var(--fg-faint); }
+.kv dd { margin: 0; overflow-wrap: anywhere; }
+.cmd {
+  display: flex; gap: 6px; align-items: center; margin-top: 7px;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 5px;
+  padding: 5px 8px; font-family: var(--mono); font-size: .84em;
+}
+.cmd code { flex: 1; overflow-x: auto; white-space: nowrap; }
+.cmd.warn { border-color: var(--danger); color: var(--danger); }
+
+.blk { border-bottom: 1px solid var(--line); padding: 6px 12px; }
+.blk-head {
+  display: flex; gap: 7px; align-items: center;
+  font-family: var(--mono); font-size: .78em; color: var(--fg-faint);
+  cursor: pointer;
+}
+.blk-head .grow { flex: 1; }
+.blk pre {
+  margin: 5px 0 0; white-space: pre-wrap; word-break: break-word;
+  font-family: var(--mono); font-size: .88em; line-height: 1.5;
+  max-height: var(--blk-max); overflow: auto;
+  background: var(--bg-2); border-radius: 4px; padding: 6px 8px;
+}
+.blk.collapsed pre { display: none; }
+.blk.user pre { background: var(--blk-user); }
+.blk.assistant pre { background: var(--blk-assistant); }
+.blk.thinking pre { background: var(--blk-thinking); color: var(--fg-dim); }
+
+/* ── 清理面板（覆蓋層）───────────────────── */
+#overlay {
+  position: fixed; inset: 0; z-index: 50;
+  background: rgba(0, 0, 0, .45);
+  display: flex; align-items: center; justify-content: center;
+}
+#overlay .panel {
+  background: var(--bg-2); border: 1px solid var(--line); border-radius: 8px;
+  width: min(880px, 92vw); max-height: 88vh;
+  display: grid; grid-template-rows: auto auto 1fr auto;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, .35);
+}
+#overlay h3 {
+  margin: 0; padding: 10px 14px; font-size: 1.05em;
+  border-bottom: 1px solid var(--line);
+}
+#overlay .opts, #overlay .foot {
+  padding: 8px 14px; display: flex; gap: 8px; align-items: center;
+  flex-wrap: wrap; border-bottom: 1px solid var(--line);
+  font-size: .9em;
+}
+#overlay .foot { border-bottom: none; border-top: 1px solid var(--line); }
+#overlay .foot .sep { flex: 1; }
+#overlay .list { overflow-y: auto; min-height: 0; }
+#overlay .prow {
+  display: grid; grid-template-columns: auto 1fr auto auto;
+  gap: 8px; align-items: center;
+  padding: 4px 14px; border-bottom: 1px solid var(--line);
+  font-size: .9em;
+}
+#overlay .prow:hover { background: var(--bg-3); }
+#overlay .prow .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#overlay .prow .meta {
+  font-family: var(--mono); font-size: .82em; color: var(--fg-faint);
+  white-space: nowrap;
+}
+#overlay .danger {
+  color: var(--danger); border-color: var(--danger);
+}
+#overlay .note {
+  padding: 8px 14px; font-size: .88em; color: var(--fg-dim);
+  background: var(--bg-3); border-bottom: 1px solid var(--line);
+}
+#overlay .note b { color: var(--danger); }
+
+.empty { padding: 22px 12px; color: var(--fg-faint); text-align: center; }
+.spin { padding: 12px; color: var(--fg-faint); }
+.warn { color: var(--danger); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Claude Code <span>Session 管理</span></h1>
+  <div id="searchbox">
+    <input id="q" placeholder="搜尋全部對話（3 字以上走索引；用 &quot;雙引號&quot; 框片語）">
+    <button class="btn" id="go">搜尋</button>
+    <button class="btn" id="grp" title="按 session 聚合命中數">聚合</button>
+  </div>
+  <span class="stats" id="ov">載入中…</span>
+  <span class="group">
+    <button class="btn sm" id="fsDown" title="縮小字體">A−</button>
+    <button class="btn sm" id="fsUp" title="放大字體">A+</button>
+    <button class="btn sm" id="blkH" title="切換對話區塊的高度上限">區塊 中</button>
+    <button class="btn sm" id="theme" title="淺色 / 深色 / 跟隨系統">跟隨系統</button>
+    <button class="btn sm" id="reset" title="還原所有版面設定">重設版面</button>
+  </span>
+  <button class="btn" id="arc" title="把原始 jsonl 備份到 archive/（只新增，不刪除）">歸檔</button>
+  <button class="btn" id="reidx" title="重新掃描 ~/.claude/projects（不會刪除任何索引）">重建索引</button>
+</header>
+
+<main>
+  <section id="projects"><div class="pane-head"><strong>專案</strong>
+    <span id="projcount"></span></div></section>
+  <div class="gutter" data-var="--col1" data-min="150" data-max="520"></div>
+  <section id="list"><div class="pane-head"><strong>Session</strong></div></section>
+  <div class="gutter" data-var="--col2" data-min="260" data-max="900"></div>
+  <section id="detail"><div class="empty">左側選一個 session，或直接搜尋</div></section>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const el = (tag, cls, txt) => {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (txt != null) n.textContent = txt;   // 一律 textContent，對話內容不可當 HTML
+  return n;
+};
+const api = async (path) => {
+  const r = await fetch(path);
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
+  return r.json();
+};
+const fmtBytes = n => {
+  if (!n) return '0';
+  const u = ['B','KB','MB','GB']; let i = 0; n = +n;
+  while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+  return n.toFixed(i ? 1 : 0) + u[i];
+};
+const fmtNum = n => (+n || 0).toLocaleString('en-US');
+const fmtTok = n => {
+  n = +n || 0;
+  if (n >= 1e9) return (n / 1e9).toFixed(1) + 'B';
+  if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + 'k';
+  return String(n);
+};
+const fmtWhen = s => s ? s.slice(0, 16).replace('T', ' ') : '—';
+const encId = id => id.split('/').map(encodeURIComponent).join('/');
+
+/* ── 版面設定（localStorage 可能因隱私模式丟例外，一律包起來）───────── */
+const LS = {
+  get(k, d) { try { const v = localStorage.getItem('ccsm.' + k); return v === null ? d : v; }
+              catch { return d; } },
+  set(k, v) { try { localStorage.setItem('ccsm.' + k, v); } catch { /* 忽略 */ } },
+};
+
+const DEFAULTS = { fs: 13, col1: 232, col2: 400, blk: 1, theme: 'auto' };
+const BLK_STEPS = [
+  { label: '區塊 矮', value: '180px' },
+  { label: '區塊 中', value: '340px' },
+  { label: '區塊 高', value: '760px' },
+  { label: '區塊 不限', value: 'none' },
+];
+
+function applyFontSize(px) {
+  px = Math.min(20, Math.max(10, px));
+  document.documentElement.style.setProperty('--fs', px + 'px');
+  LS.set('fs', px);
+  return px;
+}
+function applyCol(varName, px) {
+  document.documentElement.style.setProperty(varName, px + 'px');
+  LS.set(varName.replace('--', ''), px);
+}
+function applyBlk(i) {
+  i = ((i % BLK_STEPS.length) + BLK_STEPS.length) % BLK_STEPS.length;
+  document.documentElement.style.setProperty('--blk-max', BLK_STEPS[i].value);
+  $('#blkH').textContent = BLK_STEPS[i].label;
+  LS.set('blk', i);
+  return i;
+}
+function applyTheme(mode) {
+  const root = document.documentElement;
+  if (mode === 'auto') root.removeAttribute('data-theme');
+  else root.setAttribute('data-theme', mode);
+  $('#theme').textContent = { auto: '跟隨系統', light: '淺色', dark: '深色' }[mode];
+  LS.set('theme', mode);
+  return mode;
+}
+
+let fsNow = applyFontSize(+LS.get('fs', DEFAULTS.fs));
+let blkNow = applyBlk(+LS.get('blk', DEFAULTS.blk));
+let themeNow = applyTheme(LS.get('theme', DEFAULTS.theme));
+applyCol('--col1', +LS.get('col1', DEFAULTS.col1));
+applyCol('--col2', +LS.get('col2', DEFAULTS.col2));
+
+$('#fsUp').onclick = () => { fsNow = applyFontSize(fsNow + 1); };
+$('#fsDown').onclick = () => { fsNow = applyFontSize(fsNow - 1); };
+$('#blkH').onclick = () => { blkNow = applyBlk(blkNow + 1); };
+$('#theme').onclick = () => {
+  const order = ['auto', 'light', 'dark'];
+  themeNow = applyTheme(order[(order.indexOf(themeNow) + 1) % order.length]);
+};
+$('#reset').onclick = () => {
+  // 不需要先 del，下面每個 apply 都會把預設值寫回 localStorage
+  fsNow = applyFontSize(DEFAULTS.fs);
+  blkNow = applyBlk(DEFAULTS.blk);
+  themeNow = applyTheme(DEFAULTS.theme);
+  applyCol('--col1', DEFAULTS.col1);
+  applyCol('--col2', DEFAULTS.col2);
+};
+
+/* 欄寬拖曳。用 pointer capture，游標移出視窗也不會卡住 */
+for (const g of document.querySelectorAll('.gutter')) {
+  g.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    const varName = g.dataset.var;
+    const min = +g.dataset.min, max = +g.dataset.max;
+    const start = e.clientX;
+    const base = parseFloat(getComputedStyle(document.documentElement)
+                              .getPropertyValue(varName));
+    g.setPointerCapture(e.pointerId);
+    g.classList.add('dragging');
+    document.body.classList.add('resizing');
+    const move = ev => {
+      const w = Math.min(max, Math.max(min, base + ev.clientX - start));
+      document.documentElement.style.setProperty(varName, w + 'px');
+    };
+    const up = () => {
+      g.removeEventListener('pointermove', move);
+      g.removeEventListener('pointerup', up);
+      g.classList.remove('dragging');
+      document.body.classList.remove('resizing');
+      LS.set(varName.replace('--', ''),
+             parseFloat(getComputedStyle(document.documentElement)
+                          .getPropertyValue(varName)));
+    };
+    g.addEventListener('pointermove', move);
+    g.addEventListener('pointerup', up);
+  });
+}
+
+/* ── 狀態 ───────────────────────────────── */
+const state = { project: null, session: null, mode: 'sessions',
+                grouped: false, missing: null, order: 'last_ts',
+                projOrder: LS.get('projOrder', 'last_ts'),
+                hiddenView: 'normal' };   // normal | all | only
+let overview = {};
+
+const PROJ_ORDERS = [
+  { key: 'last_ts', label: '日期' },
+  { key: 'name', label: '名稱' },
+  { key: 'size', label: '體積' },
+  { key: 'sessions', label: '數量' },
+  { key: 'unarchived', label: '未備份' },
+];
+
+const api_post = async (path, body) => {
+  const r = await fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body || {}),
+  });
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
+  return r.json();
+};
+
+/* ── 概況 ───────────────────────────────── */
+async function loadOverview() {
+  try {
+    const o = await api('/api/overview');
+    overview = o;
+    const box = $('#ov');
+    box.textContent = '';
+    box.append(document.createTextNode(
+      `${o.projects} 專案 · ${o.main_sessions} session + ${o.subagents} subagent · `));
+    box.append(el('b', null, `存活 ${o.source_alive}`));
+    box.append(document.createTextNode(' / '));
+    const gone = el('b', o.source_missing ? 'bad' : null, `已消失 ${o.source_missing}`);
+    box.append(gone);
+    box.append(document.createTextNode(' · 備份 '));
+    const arcOk = o.unarchived_sessions === 0;
+    box.append(el('b', arcOk ? null : 'bad',
+      arcOk ? `全部 ${o.archived_sessions}` : `${o.archived_sessions}，缺 ${o.unarchived_sessions}`));
+    box.append(document.createTextNode(
+      ` · 索引 ${fmtBytes(o.index_bytes)} · 輸出 ${fmtTok(o.out_tok)} tok`));
+    if (o.expiring_soon) {
+      box.append(document.createTextNode(' · '));
+      box.append(el('b', 'bad', `${o.expiring_soon} 個 7 天內到期`));
+    }
+    const a = o.archive || {};
+    box.title =
+      `保留期設定 cleanupPeriodDays = ${o.cleanup_period_days} 天\n`
+      + `已消失的原始檔共 ${fmtBytes(o.source_missing_bytes)}\n`
+      + (a.exists
+          ? `歸檔 ${a.archive_dir}\n`
+            + `  檔案 ${a.files}（原始檔已消失 ${a.files_source_missing}）\n`
+            + `  blob ${a.blobs}／版本 ${a.versions}｜`
+            + `${fmtBytes(a.raw_bytes)} -> ${fmtBytes(a.stored_bytes)}`
+            + (a.ratio ? `（${Math.round(a.ratio * 100)}%）` : '') + '\n'
+            + (a.last_run ? `  上次歸檔 ${(a.last_run.finished_at || '').slice(0, 19)}\n` : '')
+          : '尚未建立歸檔\n')
+      + '\n'
+      + `訊息 ${fmtNum(o.messages)}／區塊 ${fmtNum(o.blocks)}\n`
+      + `遮罩 ${fmtNum(o.redacted)}／截斷 ${fmtNum(o.truncated)}／解析失敗行 ${fmtNum(o.bad_lines)}\n`
+      + `輸入 ${fmtNum(o.in_tok)}｜輸出 ${fmtNum(o.out_tok)}\n`
+      + `cache 寫 ${fmtNum(o.cache_create_tok)}｜cache 讀 ${fmtNum(o.cache_read_tok)}\n`
+      + `${fmtWhen(o.since)} ~ ${fmtWhen(o.until)}`;
+  } catch (e) {
+    $('#ov').textContent = e.message;
+    $('#ov').classList.add('warn');
+  }
+}
+
+/* ── 專案 ───────────────────────────────── */
+async function loadProjects(keepSelection) {
+  const pane = $('#projects');
+  const projs = await api('/api/projects?order=' + encodeURIComponent(state.projOrder));
+
+  pane.innerHTML = '';
+  const head = el('div', 'pane-head');
+  head.append(el('strong', null, '專案'));
+  head.append(el('span', null, `${projs.length} 個`));
+  head.append(el('span', 'sep'));
+  for (const o of PROJ_ORDERS) {
+    const b = el('button', 'btn sm' + (state.projOrder === o.key ? ' on' : ''), o.label);
+    b.title = `依${o.label}排序`;
+    b.onclick = () => {
+      state.projOrder = o.key;
+      LS.set('projOrder', o.key);
+      loadProjects(true);
+    };
+    head.append(b);
+  }
+  pane.append(head);
+
+  const mk = (label, size, subNodes, name) => {
+    const n = el('div', 'proj');
+    n.append(el('span', 'name', label));
+    n.append(el('span', 'size', size));
+    const sub = el('span', 'sub');
+    subNodes.forEach(x => sub.append(x));
+    n.append(sub);
+    n.onclick = () => selectProject(name, n);
+    return n;
+  };
+
+  const totalMissing = projs.reduce((a, p) => a + (p.missing || 0), 0);
+  const allSub = [el('span', null, `${projs.length} 個專案`)];
+  if (totalMissing) allSub.push(el('span', 'tag gone', `${totalMissing} 已消失`));
+  const all = mk('全部專案', fmtBytes(projs.reduce((a, p) => a + p.bytes, 0)),
+                 allSub, null);
+  pane.append(all);
+
+  let selected = null;
+  for (const p of projs) {
+    const sub = [el('span', null,
+      `${p.sessions} session${p.subagents ? ` +${p.subagents} sub` : ''}`)];
+    sub.push(el('span', null, fmtWhen(p.last_ts)));
+    if (p.missing) sub.push(el('span', 'tag gone', `${p.missing} 已消失`));
+    if (p.expiring) sub.push(el('span', 'tag soon', `${p.expiring} 快到期`));
+    if (p.unarchived) sub.push(el('span', 'tag unsaved', `${p.unarchived} 未備份`));
+    if (p.slugs.length > 1) sub.push(el('span', 'tag renamed', `合併 ${p.slugs.length}`));
+
+    const n = mk(p.project_display, fmtBytes(p.bytes), sub, p.project_display);
+    n.title = (p.slugs.length > 1 ? `合併：${p.slugs.join('、')}\n` : '')
+      + (p.cwd || p.project_display);
+    // 別名可就地編輯：只有單一 slug 才給改，合併後的名稱要改就去改成員
+    n.ondblclick = (ev) => { ev.stopPropagation(); promptAlias(p); };
+    pane.append(n);
+    if (keepSelection && p.project_display === state.project) selected = n;
+  }
+
+  if (keepSelection && state.project && selected) {
+    selectProject(state.project, selected);
+  } else if (keepSelection && state.project && !selected) {
+    selectProject(null, all);      // 原本選的專案因為合併而消失了
+  } else {
+    selectProject(null, all);
+  }
+}
+
+async function promptAlias(p) {
+  const cur = p.slugs.length === 1 && p.project_display !== p.slugs[0]
+    ? p.project_display : '';
+  const msg = p.slugs.length > 1
+    ? `這一列是 ${p.slugs.length} 個專案的合併：\n${p.slugs.join('\n')}\n\n`
+      + '輸入新的別名會套用到全部成員；清空則全部解除合併。'
+    : `為「${p.slugs[0]}」設定顯示名稱。\n`
+      + '把兩個專案設成同一個名稱就會合併成一列（搬過目錄時用）。\n'
+      + '清空則回到原本的名稱。';
+  const next = window.prompt(msg, cur);
+  if (next === null) return;
+  try {
+    for (const slug of p.slugs) await api_post(`/api/projects/${encodeURIComponent(slug)}/alias`, { alias: next });
+    await loadProjects(false);
+  } catch (e) { alert('設定失敗：' + e.message); }
+}
+
+function selectProject(slug, node) {
+  state.project = slug;
+  document.querySelectorAll('.proj').forEach(n => n.classList.toggle('on', n === node));
+  if (state.mode === 'search') runSearch(); else loadSessions();
+}
+
+/* ── session 清單 ────────────────────────── */
+function listHead(titleText) {
+  const head = el('div', 'pane-head');
+  head.append(el('strong', null, titleText));
+  const info = el('span', null, '');
+  head.append(info);
+  head.append(el('span', 'sep'));
+
+  // 存活狀態篩選
+  const filters = [
+    { key: null, label: '全部' },
+    { key: false, label: '存活' },
+    { key: true, label: '已消失' },
+  ];
+  for (const f of filters) {
+    const b = el('button', 'btn sm' + (state.missing === f.key ? ' on' : ''), f.label);
+    b.onclick = () => { state.missing = f.key; loadSessions(); };
+    head.append(b);
+  }
+  const ob = el('button', 'btn sm' + (state.order === 'expiring' ? ' on' : ''), '⏳');
+  ob.title = '改用「最快被清掉」排序（只看原始檔還在的）';
+  ob.onclick = () => {
+    if (state.order === 'expiring') {
+      state.order = 'last_ts';
+    } else {
+      // 「快被清掉」只對還存在的檔案有意義，已消失的沒有到期日可言
+      state.order = 'expiring';
+      state.missing = false;
+    }
+    loadSessions();
+  };
+  head.append(ob);
+
+  const tb = el('button', 'btn sm' + (state.order === 'title' ? ' on' : ''), 'A-Z');
+  tb.title = '依標題排序';
+  tb.onclick = () => {
+    state.order = state.order === 'title' ? 'last_ts' : 'title';
+    loadSessions();
+  };
+  head.append(tb);
+
+  const HV = { normal: '👁', all: '👁+', only: '🚫' };
+  const hb = el('button', 'btn sm' + (state.hiddenView !== 'normal' ? ' on' : ''),
+                HV[state.hiddenView]);
+  hb.title = { normal: '目前隱藏已隱藏的（點擊：連隱藏一起顯示）',
+               all: '目前顯示全部（點擊：只看隱藏的）',
+               only: '目前只看隱藏的（點擊：回到正常）' }[state.hiddenView];
+  hb.onclick = () => {
+    state.hiddenView = { normal: 'all', all: 'only', only: 'normal' }[state.hiddenView];
+    loadSessions();
+  };
+  head.append(hb);
+
+  const pb = el('button', 'btn sm', '🧹');
+  pb.title = '移除「原始檔已被 Claude Code 清掉」的 session 記錄';
+  pb.onclick = openPurge;
+  head.append(pb);
+  return { head, info };
+}
+
+async function loadSessions() {
+  state.mode = 'sessions';
+  const pane = $('#list');
+  pane.innerHTML = '';
+  const { head, info } = listHead('Session');
+  info.textContent = '載入中…';
+  pane.append(head);
+
+  const params = new URLSearchParams({ limit: '300', order: state.order });
+  if (state.project) params.set('project', state.project);
+  if (state.missing !== null) params.set('missing', String(state.missing));
+  if (state.hiddenView === 'all') params.set('include_hidden', 'true');
+  if (state.hiddenView === 'only') params.set('hidden_only', 'true');
+
+  let data;
+  try { data = await api('/api/sessions?' + params); }
+  catch (e) { pane.append(el('div', 'empty warn', e.message)); return; }
+
+  info.textContent = `${data.items.length} / ${data.total}`;
+  if (!data.items.length) {
+    pane.append(el('div', 'empty',
+      state.hiddenView === 'only' ? '沒有被隱藏的 session'
+      : state.missing === true ? '這個範圍內沒有已消失的 session' : '沒有 session'));
+    return;
+  }
+
+  for (const s of data.items) {
+    const n = el('div', 'row' + (s.hidden ? ' is-hidden' : ''));
+    const t1 = el('div', 't1');
+    t1.append(el('span', 'title', s.display_title));
+    t1.append(el('span', 'when', fmtWhen(s.last_ts)));
+    const t2 = el('div', 't2');
+    t2.append(el('span', null, `${s.msg_count} 訊息`));
+    t2.append(el('span', null, `out ${fmtTok(s.out_tok)}`));
+    t2.append(el('span', null, fmtBytes(s.jsonl_size)));
+    if (s.subagent_count) t2.append(el('span', 'tag subagent', `${s.subagent_count} subagent`));
+    statusTag(s, t2);
+    n.append(t1, t2);
+    n.onclick = () => { markRow(n); openSession(s.id); };
+    pane.append(n);
+  }
+}
+
+/** 依存活狀態掛標籤：已消失 / 剩幾天到期 / 有沒有備份 / 更名 / 隱藏 */
+function statusTag(s, into) {
+  // 兩種來源的更名要分清楚：本工具的覆寫只存在本工具，
+  // Claude Code 自己的 custom-title 是它 append 進 jsonl 的，兩邊都看得到
+  if (s.label_title) {
+    const t = el('span', 'tag renamed', '本工具更名');
+    t.title = `本工具的覆寫：${s.label_title}\n`
+      + `Claude Code 的名稱：${s.custom_title || s.ai_title || '(無)'}\n`
+      + '（這個覆寫只存在本工具，Claude Code 看不到）';
+    into.append(t);
+  } else if (s.custom_title) {
+    const t = el('span', 'tag renamed', 'CC 已改名');
+    t.title = `你在 Claude Code 裡改的名稱：${s.custom_title}\n`
+      + `原本的 ai-title：${s.ai_title || '(無)'}`;
+    into.append(t);
+  }
+  if (s.hidden) into.append(el('span', 'tag hiddenmark', '已隱藏'));
+  if (s.source_missing) {
+    const t = el('span', 'tag gone', s.archived ? '原始檔已消失（有備份）' : '原始檔已消失');
+    t.title = s.archived
+      ? '原始 jsonl 已被保留期清掉，但歸檔裡有完整備份，可以還原'
+      : '原始 jsonl 已被保留期清掉，且沒有備份 —— 索引裡這份是唯一留存的記錄';
+    into.append(t);
+  }
+  if (s.archived === false && !s.source_missing) {
+    const t = el('span', 'tag unsaved', '未備份');
+    t.title = '這個 session 還沒進歸檔，按上方「歸檔」或等排程執行';
+    into.append(t);
+  } else if (s.archived && !s.source_missing) {
+    into.append(el('span', 'tag saved', '已備份'));
+  }
+  if (!s.source_missing && typeof s.days_left === 'number' && s.days_left <= 14) {
+    const d = Math.max(0, Math.round(s.days_left));
+    const t = el('span', 'tag soon', d <= 0 ? '隨時會被清掉' : `${d} 天後清除`);
+    t.title = `檔案已存在 ${s.age_days} 天，保留期 ${overview.cleanup_period_days} 天`;
+    into.append(t);
+  }
+}
+
+function markRow(node) {
+  document.querySelectorAll('#list .row').forEach(n => n.classList.toggle('on', n === node));
+}
+
+/* ── 搜尋 ───────────────────────────────── */
+let searchSeq = 0;
+async function runSearch() {
+  const q = $('#q').value.trim();
+  if (!q) { loadSessions(); return; }
+  state.mode = 'search';
+  const seq = ++searchSeq;
+
+  const pane = $('#list');
+  pane.innerHTML = '';
+  const head = el('div', 'pane-head');
+  head.append(el('strong', null, state.grouped ? '命中的 Session' : '搜尋結果'));
+  const info = el('span', null, '搜尋中…');
+  head.append(info);
+  pane.append(head);
+
+  const params = new URLSearchParams({ q, limit: state.grouped ? '100' : '80' });
+  if (state.project) params.set('projects', state.project);
+  if (state.grouped) params.set('group', 'true');
+
+  let data;
+  try { data = await api('/api/search?' + params); }
+  catch (e) { pane.append(el('div', 'empty warn', e.message)); return; }
+  if (seq !== searchSeq) return;                      // 舊請求晚回來，丟掉
+
+  if (state.grouped) {
+    info.textContent = `${data.items.length} 個 session`;
+    if (!data.items.length) { pane.append(el('div', 'empty', '沒有命中')); return; }
+    for (const g of data.items) {
+      const n = el('div', 'row');
+      const t1 = el('div', 't1');
+      t1.append(el('span', 'title', g.display_title || g.id));
+      t1.append(el('span', 'when', fmtWhen(g.ts)));
+      const t2 = el('div', 't2');
+      t2.append(el('span', null, `${g.hits} 筆命中`));
+      t2.append(el('span', null, g.project_display || g.project_slug));
+      if (g.kind === 'subagent') t2.append(el('span', 'tag subagent', 'subagent'));
+      n.append(t1, t2);
+      n.onclick = () => { markRow(n); openSession(g.id); };
+      pane.append(n);
+    }
+    return;
+  }
+
+  info.textContent = `${data.items.length} / ${fmtNum(data.total)} 筆`
+    + (data.slow ? '（慢速掃描：查詢詞不足 3 字）' : '');
+  if (data.slow) info.classList.add('warn');
+  if (!data.items.length) { pane.append(el('div', 'empty', '沒有命中')); return; }
+
+  for (const h of data.items) {
+    const n = el('div', 'row');
+    const t1 = el('div', 't1');
+    t1.append(el('span', 'title', h.display_title || h.session_id));
+    t1.append(el('span', 'when', fmtWhen(h.ts)));
+    const t2 = el('div', 't2');
+    t2.append(el('span', `tag ${h.role}`, h.tool_name ? `${h.role}/${h.tool_name}` : h.role));
+    t2.append(el('span', null, h.project_display || h.project_slug));
+    if (h.kind === 'subagent') t2.append(el('span', 'tag subagent', 'subagent'));
+    if (h.redacted) t2.append(el('span', 'tag redacted', '含遮罩'));
+    n.append(t1, t2, snippetNode(h));
+    n.onclick = () => { markRow(n); openSession(h.session_id, h.block_id); };
+    pane.append(n);
+  }
+}
+
+function snippetNode(h) {
+  const box = el('div', 'snip');
+  const text = h.snippet || '';
+  let cursor = 0;
+  for (const [a, b] of (h.spans || [])) {
+    if (a < cursor) continue;
+    box.append(document.createTextNode(text.slice(cursor, a)));
+    box.append(el('mark', null, text.slice(a, b)));
+    cursor = b;
+  }
+  box.append(document.createTextNode(text.slice(cursor)));
+  return box;
+}
+
+/* ── session 詳細 ────────────────────────── */
+async function openSession(id, focusBlock) {
+  state.session = id;
+  const pane = $('#detail');
+  pane.innerHTML = '';
+  pane.append(el('div', 'spin', '載入中…'));
+
+  let s, blocks;
+  try {
+    [s, blocks] = await Promise.all([
+      api('/api/sessions/' + encId(id)),
+      api('/api/transcript/' + encId(id) + '?limit=1200'),
+    ]);
+  } catch (e) {
+    pane.innerHTML = '';
+    pane.append(el('div', 'empty warn', e.message));
+    return;
+  }
+  if (state.session !== id) return;
+  pane.innerHTML = '';
+
+  const meta = el('div', 'meta');
+  meta.append(titleBar(s));
+  const kv = el('dl', 'kv');
+  const put = (k, v) => { kv.append(el('dt', null, k), el('dd', null, v)); };
+  put('專案', s.project_display === s.project_slug ? s.project_slug
+            : `${s.project_display}（${s.project_slug}）`);
+  if (s.cwd) put('cwd', s.cwd);
+  put('id', s.id);
+  put('時間', `${fmtWhen(s.first_ts)} ~ ${fmtWhen(s.last_ts)}`);
+  put('模型', s.models || '—');
+  put('token', `輸入 ${fmtNum(s.in_tok)}｜輸出 ${fmtNum(s.out_tok)}`
+    + `｜cache 寫 ${fmtNum(s.cache_create_tok)}｜cache 讀 ${fmtNum(s.cache_read_tok)}`);
+  put('檔案', `${fmtBytes(s.jsonl_size)}`
+    + (s.sidecar_bytes ? ` + 附屬 ${fmtBytes(s.sidecar_bytes)}` : '')
+    + `｜Claude Code ${s.cc_version || '?'}`
+    + (s.git_branch ? `｜${s.git_branch}` : ''));
+  if (!s.source_missing && typeof s.days_left === 'number') {
+    put('保留期', `已存在 ${s.age_days} 天，${Math.round(s.days_left)} 天後會被清除`);
+  }
+  if (s.bad_lines) put('解析失敗', `${s.bad_lines} 行`);
+  meta.append(kv);
+
+  if (s.source_missing) {
+    const w = el('div', 'cmd warn');
+    w.append(el('span', null, s.archived
+      ? '原始 jsonl 已被 Claude Code 的保留期清掉，但歸檔裡有完整備份。'
+        + '還原指令：'
+      : '原始 jsonl 已被保留期清掉，而且沒有備份 —— 索引裡這份是唯一留存的記錄。'
+        + '被截斷的區塊無法再載入完整內容，也無法 resume。'));
+    if (s.archived) {
+      const cmd = `.venv\\Scripts\\python.exe -m src.cli restore --session ${s.id}`;
+      w.append(el('code', null, cmd));
+      const cp = el('button', 'btn sm', '複製');
+      cp.onclick = async (ev) => {
+        ev.stopPropagation();
+        try { await navigator.clipboard.writeText(cmd); cp.textContent = '已複製'; }
+        catch { cp.textContent = '複製失敗'; }
+        setTimeout(() => cp.textContent = '複製', 1400);
+      };
+      w.append(cp);
+    }
+    meta.append(w);
+
+    // 原始檔已消失才給移除 —— 還在的交給 Claude Code 自己的保留期
+    const rm = el('div', 'cmd');
+    rm.append(el('span', null, '不需要保留這筆記錄了？'));
+    const rb = el('button', 'btn sm danger', '移除這筆記錄…');
+    rb.onclick = (ev) => { ev.stopPropagation(); openPurgeOne(s); };
+    rm.append(rb);
+    meta.append(rm);
+  }
+
+  if (s.resume && s.resume.resumable) {
+    const box = el('div', 'cmd');
+    box.append(el('code', null, s.resume.powershell));
+    const copy = el('button', 'btn sm', '複製');
+    copy.onclick = async (ev) => {
+      ev.stopPropagation();
+      try {
+        await navigator.clipboard.writeText(s.resume.powershell);
+        copy.textContent = '已複製';
+      } catch { copy.textContent = '複製失敗'; }
+      setTimeout(() => copy.textContent = '複製', 1400);
+    };
+    box.append(copy);
+    meta.append(box);
+  } else if (s.resume && !s.source_missing) {
+    meta.append(el('div', 'cmd', s.resume.reason));
+  }
+
+  if (s.subagents && s.subagents.length) {
+    const box = el('div', 'cmd');
+    box.append(el('span', null, `${s.subagents.length} 個 subagent：`));
+    for (const a of s.subagents) {
+      const b = el('button', 'btn sm', (a.agent_id || a.id).slice(0, 10));
+      b.onclick = (ev) => { ev.stopPropagation(); openSession(a.id); };
+      box.append(b);
+    }
+    meta.append(box);
+  }
+  if (s.kind === 'subagent' && s.parent_session_id) {
+    const box = el('div', 'cmd');
+    box.append(el('span', null, '這是 subagent 逐字稿，'));
+    const b = el('button', 'btn sm', '回到主 session');
+    b.onclick = (ev) => { ev.stopPropagation(); openSession(s.parent_session_id); };
+    box.append(b);
+    meta.append(box);
+  }
+  pane.append(meta);
+
+  if (!blocks.length) { pane.append(el('div', 'empty', '沒有可顯示的內容')); return; }
+  let target = null;
+  for (const b of blocks) {
+    const n = renderBlock(b, s.source_missing);
+    if (focusBlock && b.id === focusBlock) { target = n; n.classList.remove('collapsed'); }
+    pane.append(n);
+  }
+  if (target) {
+    target.scrollIntoView({ block: 'center' });
+    target.style.outline = '1px solid var(--accent)';
+  }
+}
+
+/** 詳細頁的標題列：顯示標題 + 更名 / 隱藏按鈕 */
+function titleBar(s) {
+  const h = el('h2');
+  h.append(el('span', 't', s.display_title));
+
+  if (s.label_title) {
+    const t = el('span', 'tag renamed', '本工具更名');
+    t.title = `Claude Code 的名稱：${s.custom_title || s.ai_title || '(無)'}`;
+    h.append(t);
+  } else if (s.custom_title) {
+    const t = el('span', 'tag renamed', 'CC 已改名');
+    t.title = `原本的 ai-title：${s.ai_title || '(無)'}`;
+    h.append(t);
+  }
+  if (s.hidden) h.append(el('span', 'tag hiddenmark', '已隱藏'));
+
+  const rename = el('button', 'btn sm', '更名');
+  rename.title = '只改這個工具裡的顯示，不動原始 jsonl（Claude Code 看不到）';
+  rename.onclick = (ev) => { ev.stopPropagation(); startRename(s, h); };
+  h.append(rename);
+
+  const hide = el('button', 'btn sm', s.hidden ? '取消隱藏' : '隱藏');
+  hide.title = s.hidden ? '讓它重新出現在清單與搜尋結果'
+                        : '從清單與搜尋結果中隱藏（可還原，不刪任何資料）';
+  hide.onclick = async (ev) => {
+    ev.stopPropagation();
+    hide.disabled = true;
+    try {
+      await api_post(`/api/sessions/${encId(s.id)}/label`, { hidden: !s.hidden });
+      await openSession(s.id);
+      await loadSessions();
+    } catch (e) { alert('失敗：' + e.message); hide.disabled = false; }
+  };
+  h.append(hide);
+  return h;
+}
+
+async function startRename(s, h) {
+  const box = el('div', 'title-edit');
+  const input = document.createElement('input');
+  input.value = s.label_title || s.custom_title || s.ai_title || '';
+  input.placeholder = '新名稱';
+  box.append(input);
+
+  // 兩種儲存方式差別很大，先問後端這個 session 能不能真寫入
+  let canWrite = { ok: false, reason: '檢查中…' };
+  try { canWrite = await api(`/api/sessions/${encId(s.id)}/can-rename`); }
+  catch (e) { canWrite = { ok: false, reason: e.message }; }
+
+  const done = async () => { await openSession(s.id); await loadSessions(); };
+
+  const write = el('button', 'btn sm', '寫入 Claude Code');
+  write.title = canWrite.ok
+    ? '追加一筆 custom-title 到原始 jsonl，Claude Code 的 /resume 選單也會顯示新名稱'
+    : canWrite.reason;
+  write.disabled = !canWrite.ok;
+  write.onclick = async (ev) => {
+    ev.stopPropagation();
+    const v = input.value.trim();
+    if (!v) { alert('名稱不能為空'); return; }
+    write.disabled = true; write.textContent = '寫入中…';
+    try {
+      await api_post(`/api/sessions/${encId(s.id)}/rename`, { title: v });
+      await done();
+    } catch (e) {
+      alert('寫入失敗：' + e.message);
+      h.replaceWith(titleBar(s));
+    }
+  };
+
+  const local = el('button', 'btn sm', '僅本工具');
+  local.title = '只改這個工具裡的顯示，不動原始 jsonl（Claude Code 看不到）。'
+    + '留空則清除覆寫。';
+  local.onclick = async (ev) => {
+    ev.stopPropagation();
+    const v = input.value.trim();
+    try {
+      // 空字串代表清除覆寫。API 收到 title:null 才會清。
+      await api_post(`/api/sessions/${encId(s.id)}/label`,
+                     { title: v === '' ? null : v });
+      await done();
+    } catch (e) { alert('失敗：' + e.message); h.replaceWith(titleBar(s)); }
+  };
+
+  const cancel = el('button', 'btn sm', '取消');
+  cancel.onclick = (ev) => { ev.stopPropagation(); h.replaceWith(titleBar(s)); };
+
+  box.append(write, local, cancel);
+  if (!canWrite.ok) {
+    const hint = el('span', 'warn', canWrite.reason);
+    hint.style.fontSize = '.82em';
+    box.append(hint);
+  }
+
+  input.onkeydown = (ev) => {
+    ev.stopPropagation();
+    // Enter 走「能用的那個」：可寫入就真改名，否則退回本地覆寫
+    if (ev.key === 'Enter') (canWrite.ok ? write : local).click();
+    if (ev.key === 'Escape') cancel.click();
+  };
+
+  h.replaceWith(box);
+  input.focus();
+  input.select();
+}
+
+function renderBlock(b, sourceMissing) {
+  // 工具的輸入輸出量大又雜，預設收起；人講的話與結論預設展開
+  const collapsed = (b.role === 'tool_use' || b.role === 'tool_result'
+                     || b.role === 'attachment' || b.role === 'thinking');
+  const n = el('div', 'blk ' + b.role + (collapsed ? ' collapsed' : ''));
+
+  const head = el('div', 'blk-head');
+  head.append(el('span', 'tag ' + b.role,
+    b.tool_name ? `${b.role}/${b.tool_name}` : b.role));
+  head.append(el('span', 'grow', fmtWhen(b.ts)));
+  if (b.is_sidechain) head.append(el('span', 'tag subagent', 'sidechain'));
+  if (b.redacted) head.append(el('span', 'tag redacted', '含遮罩'));
+  if (b.out_tok) head.append(el('span', null, `out ${fmtTok(b.out_tok)}`));
+  head.append(el('span', null, `${(b.text || '').length} 字`));
+
+  const pre = el('pre', null, b.text || '');
+  head.onclick = () => n.classList.toggle('collapsed');
+
+  if (b.truncated) {
+    if (sourceMissing) {
+      const t = el('span', 'tag gone', '已截斷且無法還原');
+      t.title = '原始 jsonl 已被清掉，完整內容取不回來了';
+      head.append(t);
+    } else {
+      const more = el('button', 'btn sm', '載入完整內容');
+      more.onclick = async (ev) => {
+        ev.stopPropagation();
+        more.disabled = true; more.textContent = '讀取中…';
+        try {
+          const full = await api('/api/block/' + b.id);
+          pre.textContent = full.text || full.error || '';
+          more.remove();
+          n.classList.remove('collapsed');
+        } catch (e) { more.textContent = e.message; more.disabled = false; }
+      };
+      head.append(more);
+    }
+  }
+  n.append(head, pre);
+  return n;
+}
+
+/* ── 清理已消失的 session ──────────────────── */
+function closeOverlay() {
+  const o = $('#overlay');
+  if (o) o.remove();
+}
+
+/** 單筆移除：從 session 詳細頁直接處理，不必回去開清單面板 */
+async function openPurgeOne(s) {
+  closeOverlay();
+  const ov = el('div', null);
+  ov.id = 'overlay';
+  const panel = el('div', 'panel');
+  panel.style.gridTemplateRows = 'auto auto auto auto';
+  ov.append(panel);
+  ov.onclick = (ev) => { if (ev.target === ov) closeOverlay(); };
+  document.body.append(ov);
+
+  panel.append(el('h3', null, '移除這筆 session 記錄'));
+
+  const info = el('div', 'note');
+  info.append(el('b', null, s.display_title));
+  info.append(document.createElement('br'));
+  info.append(document.createTextNode(
+    `${s.project_display}｜${s.msg_count} 訊息｜原始檔曾佔 ${fmtBytes(s.jsonl_size)}`));
+  info.append(document.createElement('br'));
+  info.append(document.createTextNode(s.id));
+  panel.append(info);
+
+  const body = el('div', 'opts');
+  body.style.display = 'block';
+  if (s.archived) {
+    body.append(el('div', null,
+      '這個 session 有歸檔備份，所以有兩種選擇：'));
+  } else {
+    const p = el('div', 'warn');
+    p.append(el('b', null, '這個 session 沒有歸檔備份。'));
+    p.append(document.createTextNode(
+      '索引裡這份是唯一留存的記錄，移除後內容徹底消失、無法還原。'));
+    body.append(p);
+  }
+  panel.append(body);
+
+  const foot = el('div', 'foot');
+
+  const run = async (depth, btn) => {
+    btn.disabled = true;
+    const label = btn.textContent;
+    btn.textContent = '移除中…';
+    try {
+      const r = await api_post('/api/purge', {
+        confirm: true, depth, session_ids: [s.id],
+      });
+      let msg = `已移除（訊息 ${r.removed_messages}、區塊 ${r.removed_blocks}）`;
+      if (depth === 'full' && r.removed_blobs) {
+        msg += `\n歸檔 blob ${r.removed_blobs} 個，釋出 ${fmtBytes(r.freed_blob_bytes)}`;
+      }
+      if (r.errors && r.errors.length) msg += '\n\n錯誤：\n' + r.errors.join('\n');
+      closeOverlay();
+      // 這筆已經不存在了，詳細頁要清掉，不然留著一個點不開的殼
+      state.session = null;
+      $('#detail').innerHTML = '';
+      $('#detail').append(el('div', 'empty', msg));
+      await loadOverview();
+      await loadSessions();
+      await loadProjects(true);
+    } catch (e) {
+      alert('移除失敗：' + e.message);
+      btn.disabled = false; btn.textContent = label;
+    }
+  };
+
+  if (s.archived) {
+    const b1 = el('button', 'btn sm', '只清索引（備份留著）');
+    b1.title = '之後可以用 restore 從歸檔取回，再重新索引';
+    b1.onclick = () => run('index', b1);
+    const b2 = el('button', 'btn sm danger', '徹底移除（含備份）');
+    b2.title = '連歸檔 blob 一起刪，不可逆';
+    b2.onclick = () => {
+      if (!window.confirm('連歸檔備份一起刪除，這是不可逆的。確定嗎？')) return;
+      run('full', b2);
+    };
+    foot.append(b1, b2);
+  } else {
+    const b = el('button', 'btn sm danger', '確定移除（無法還原）');
+    b.onclick = () => {
+      if (!window.confirm('這筆沒有備份，移除後內容徹底消失。確定嗎？')) return;
+      run('index', b);
+    };
+    foot.append(b);
+  }
+
+  foot.append(el('span', 'sep'));
+  const cancel = el('button', 'btn sm', '取消');
+  cancel.onclick = closeOverlay;
+  foot.append(cancel);
+  panel.append(foot);
+}
+
+async function openPurge() {
+  closeOverlay();
+  const ov = el('div', null);
+  ov.id = 'overlay';
+  const panel = el('div', 'panel');
+  ov.append(panel);
+  ov.onclick = (ev) => { if (ev.target === ov) closeOverlay(); };
+  document.body.append(ov);
+
+  panel.append(el('h3', null, '移除「原始檔已消失」的 session 記錄'));
+
+  const opts = el('div', 'opts');
+  let depth = 'index';
+  const depthBtns = [];
+  for (const d of [
+    { key: 'index', label: '只清索引', hint: '歸檔 blob 留著，之後可用 restore 取回' },
+    { key: 'full', label: '連歸檔一起刪', hint: '不可逆，內容從此不存在於任何地方' },
+  ]) {
+    const b = el('button', 'btn sm' + (d.key === 'index' ? ' on' : '')
+                 + (d.key === 'full' ? ' danger' : ''), d.label);
+    b.title = d.hint;
+    b.onclick = () => {
+      depth = d.key;
+      depthBtns.forEach(x => x.classList.toggle('on', x === b));
+      renderFoot();
+    };
+    depthBtns.push(b);
+    opts.append(b);
+  }
+  opts.append(el('span', null, '｜'));
+  const daysInput = document.createElement('input');
+  daysInput.type = 'number';
+  daysInput.min = '0';
+  daysInput.placeholder = '天';
+  daysInput.style.width = '68px';
+  daysInput.title = '只列出最後活動早於 N 天前的（留空= 全部）';
+  opts.append(el('span', null, '早於'), daysInput, el('span', null, '天前'));
+  const reload = el('button', 'btn sm', '重新列出');
+  opts.append(reload);
+  panel.append(opts);
+
+  const note = el('div', 'note');
+  panel.append(note);
+
+  const list = el('div', 'list');
+  panel.append(list);
+
+  const foot = el('div', 'foot');
+  panel.append(foot);
+
+  const picked = new Set();
+  let items = [];
+
+  function renderFoot() {
+    foot.innerHTML = '';
+    const sel = items.filter(i => picked.has(i.session_id));
+    const unbacked = sel.filter(i => !i.archived).length;
+
+    const all = el('button', 'btn sm', '全選');
+    all.onclick = () => { items.forEach(i => picked.add(i.session_id)); redraw(); };
+    const onlyBacked = el('button', 'btn sm', '只選有備份的');
+    onlyBacked.onclick = () => {
+      picked.clear();
+      items.filter(i => i.archived).forEach(i => picked.add(i.session_id));
+      redraw();
+    };
+    const none = el('button', 'btn sm', '取消選取');
+    none.onclick = () => { picked.clear(); redraw(); };
+    foot.append(all, onlyBacked, none, el('span', 'sep'));
+
+    const info = el('span', null, `已選 ${sel.length} 個`);
+    if (unbacked) {
+      info.append(document.createTextNode('，其中 '));
+      info.append(el('b', 'warn', `${unbacked} 個無備份`));
+    }
+    foot.append(info);
+
+    const go = el('button', 'btn sm' + (depth === 'full' ? ' danger' : ''),
+                  depth === 'full' ? '徹底移除' : '移除記錄');
+    go.disabled = sel.length === 0;
+    go.onclick = async () => {
+      const lines = [
+        `即將移除 ${sel.length} 個 session 的記錄。`,
+        depth === 'full'
+          ? '深度：連歸檔 blob 一起刪 —— 這是不可逆的，內容從此不存在於任何地方。'
+          : '深度：只清索引 —— 歸檔 blob 保留，之後可用 restore 取回。',
+      ];
+      if (unbacked) {
+        lines.push('', `其中 ${unbacked} 個沒有歸檔備份 —— 索引裡那份是唯一留存，`
+          + '移除後內容徹底消失，無論選哪種深度。');
+      }
+      lines.push('', '確定要繼續嗎？');
+      if (!window.confirm(lines.join('\n'))) return;
+
+      go.disabled = true; go.textContent = '移除中…';
+      try {
+        const r = await api_post('/api/purge', {
+          confirm: true, depth,
+          session_ids: sel.map(i => i.session_id),
+        });
+        let msg = `已移除 ${r.removed_sessions} 個 session`
+          + `（訊息 ${r.removed_messages}、區塊 ${r.removed_blocks}）`;
+        if (depth === 'full') {
+          msg += `\n歸檔 blob ${r.removed_blobs} 個，釋出 ${fmtBytes(r.freed_blob_bytes)}`;
+        }
+        msg += '\n\n索引檔本身要 VACUUM 才會縮小：'
+          + '\n.venv\\Scripts\\python.exe -m src.cli vacuum';
+        if (r.errors && r.errors.length) msg += '\n\n錯誤：\n' + r.errors.join('\n');
+        alert(msg);
+        closeOverlay();
+        await loadOverview();
+        await loadProjects(true);
+      } catch (e) {
+        alert('移除失敗：' + e.message);
+        go.disabled = false; go.textContent = '移除記錄';
+      }
+    };
+    foot.append(go);
+
+    const close = el('button', 'btn sm', '關閉');
+    close.onclick = closeOverlay;
+    foot.append(close);
+  }
+
+  function redraw() {
+    list.innerHTML = '';
+    if (!items.length) {
+      list.append(el('div', 'empty', '沒有符合條件的 session'));
+      renderFoot();
+      return;
+    }
+    for (const i of items) {
+      const row = el('div', 'prow');
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = picked.has(i.session_id);
+      cb.onchange = () => {
+        if (cb.checked) picked.add(i.session_id); else picked.delete(i.session_id);
+        renderFoot();
+      };
+      row.append(cb);
+
+      const nm = el('span', 'nm', i.display_title);
+      nm.title = `${i.session_id}\n${i.project_slug}`;
+      row.append(nm);
+      row.append(el('span', 'meta',
+        `${(i.last_ts || '').slice(0, 10)}｜${i.msg_count} 訊息｜`
+        + `${fmtBytes(i.jsonl_size)}`));
+      row.append(el('span', i.archived ? 'tag saved' : 'tag gone',
+                    i.archived ? '有備份' : '無備份'));
+      list.append(row);
+    }
+    renderFoot();
+  }
+
+  async function load() {
+    list.innerHTML = '';
+    list.append(el('div', 'spin', '載入中…'));
+    const body = { depth };
+    const d = parseInt(daysInput.value, 10);
+    if (!Number.isNaN(d) && d >= 0) body.older_than_days = d;
+    try {
+      const r = await api_post('/api/purge/plan', body);
+      items = r.items;
+      picked.clear();
+      note.innerHTML = '';
+      note.append(document.createTextNode(
+        `只列出原始檔已被 Claude Code 清掉的 session（原始檔還在的不動）。`
+        + `共 ${r.total} 個，索引裡 ${fmtNum(r.index_chars)} 字。`));
+      if (r.unbacked) {
+        note.append(document.createElement('br'));
+        note.append(el('b', null, `其中 ${r.unbacked} 個沒有歸檔備份`));
+        note.append(document.createTextNode(
+          ' —— 索引裡那份是唯一留存，移除後就徹底消失了。'));
+      }
+      redraw();
+    } catch (e) {
+      list.innerHTML = '';
+      list.append(el('div', 'empty warn', e.message));
+    }
+  }
+
+  reload.onclick = load;
+  daysInput.onkeydown = (ev) => { if (ev.key === 'Enter') load(); };
+  await load();
+}
+
+/* ── 事件 ───────────────────────────────── */
+$('#go').onclick = runSearch;
+$('#q').onkeydown = e => { if (e.key === 'Enter') runSearch(); };
+$('#grp').onclick = () => {
+  state.grouped = !state.grouped;
+  $('#grp').classList.toggle('on', state.grouped);
+  if (state.mode === 'search') runSearch();
+};
+$('#arc').onclick = async () => {
+  const b = $('#arc');
+  b.disabled = true; b.textContent = '歸檔中…';
+  try {
+    const r = await fetch('/api/archive', { method: 'POST' }).then(x => x.json());
+    b.textContent = `新增 ${r.added}／未變 ${r.unchanged}`;
+    if (r.errors && r.errors.length) console.warn('歸檔錯誤', r.errors);
+    await loadOverview();
+    if (state.mode === 'sessions') await loadSessions();
+  } catch (e) { b.textContent = '失敗'; console.error(e); }
+  setTimeout(() => { b.textContent = '歸檔'; b.disabled = false; }, 2600);
+};
+$('#reidx').onclick = async () => {
+  const b = $('#reidx');
+  b.disabled = true; b.textContent = '掃描中…';
+  try {
+    const r = await fetch('/api/reindex', { method: 'POST' }).then(x => x.json());
+    b.textContent = `重建 ${r.rebuilt}／增量 ${r.appended}／跳過 ${r.skipped}`;
+    if (r.errors && r.errors.length) console.warn('索引錯誤', r.errors);
+    await loadOverview();
+    await loadProjects();
+  } catch (e) { b.textContent = '失敗'; console.error(e); }
+  setTimeout(() => { b.textContent = '重建索引'; b.disabled = false; }, 2600);
+};
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && $('#overlay')) { closeOverlay(); return; }
+  if (e.key === '/' && document.activeElement !== $('#q')
+      && document.activeElement.tagName !== 'INPUT') {
+    e.preventDefault(); $('#q').focus();
+  }
+  if (e.key === 'Escape' && document.activeElement === $('#q')) { $('#q').blur(); }
+});
+
+loadOverview().then(() => loadProjects(false));
+</script>
+</body>
+</html>

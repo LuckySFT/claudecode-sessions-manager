@@ -1,0 +1,3 @@
+# .cmd 必須是 CRLF，否則 cmd.exe 會把 rem 註解當指令執行（見 CLAUDE.md）
+*.cmd text eol=crlf
+*.ps1 text eol=crlf

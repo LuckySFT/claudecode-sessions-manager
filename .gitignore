@@ -1,0 +1,19 @@
+# 使用者提供參考文件
+.notes
+
+# 索引與歸檔（可重建，且含對話內容）
+data/
+archive/
+
+.venv/
+__pycache__/
+*.pyc
+.playwright-mcp/
+logs/
+logs/.nul
+
+# 個人本機權限設定（含本機路徑與使用者名稱）
+.claude/settings.local.json
+
+# 第三方圖示素材（授權未確認，不進版控）
+*.ico
