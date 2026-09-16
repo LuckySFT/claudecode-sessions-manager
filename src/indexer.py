@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -59,6 +60,17 @@ def _dir_bytes(path: Path) -> int:
     return total
 
 
+def is_excluded(slug: str, pattern: str | None = None) -> bool:
+    """這個 slug 是否為刻意不納管的暫存工作區（見 config.EXCLUDE_SLUG_RE）。
+
+    pattern 給 None 代表讀 config 的預設值；給空字串代表不排除任何東西。
+    """
+    pat = config.EXCLUDE_SLUG_RE if pattern is None else pattern
+    if not pat:
+        return False
+    return re.search(pat, slug) is not None
+
+
 def discover(projects_dir: Path | None = None) -> list[SessionFile]:
     """掃出主 session 與 subagent 逐字稿。
 
@@ -74,6 +86,8 @@ def discover(projects_dir: Path | None = None) -> list[SessionFile]:
     found: list[SessionFile] = []
 
     for path in sorted(root.glob("*/*.jsonl")):
+        if is_excluded(path.parent.name):
+            continue
         try:
             st = path.stat()
         except OSError:
@@ -90,6 +104,8 @@ def discover(projects_dir: Path | None = None) -> list[SessionFile]:
         ))
 
     for path in sorted(root.glob("*/*/subagents/*.jsonl")):
+        if is_excluded(path.parent.parent.parent.name):
+            continue
         try:
             st = path.stat()
         except OSError:

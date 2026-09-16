@@ -111,6 +111,13 @@ CCSM_CLAUDE_HOME=<假的 .claude>  CCSM_DATA_DIR=<暫存>  CCSM_ARCHIVE_DIR=<暫
   handle，而 venv 的 python 是 stub 又傳給子行程；實測導掉三個標準流仍無效。
   **不修** —— 要解決得改用 WMI 建行程，會失去 `-RedirectStandardOutput`
   與 `HasExited`。雙擊與工作排程器都不受影響；腳本裡呼叫請重導向到檔案再讀。
+- **Claude Code 自己的 scratchpad 不納管**（`config.EXCLUDE_SLUG_RE`）。
+  `%TEMP%\claude\<專案>\<session-id>\scratchpad\` 底下啟動的 session，會被
+  Claude Code 記成一個獨立「專案」，slug 長到佔滿整個清單，內容實測都是 skill eval
+  的測試探針。**這是全專案唯一「主動放棄留存」的地方**，跟紅線 1 的精神相反，
+  所以刻意做成可用環境變數 `CCSM_EXCLUDE_SLUG_RE` 關掉（設空字串即全部納管），
+  並由 `tests/test_core.py::TestScratchpadExclusion` 正反兩面釘住 —— 該排的要排掉，
+  真的叫 scratchpad 的專案一個都不能誤殺。看到這類 session 沒被索引不是 bug。
 - **移動專案 / 刪除還存在的原始檔**：評估後決定不做，理由見 `docs/TODO.md`。
 - **VS Code 的 Pin 與 Mark-as-unread 的 key 名稱是推測，沒有證據** ——
   不要憑推測寫。要做先實際點一次再去 `state.vscdb` 看真名。

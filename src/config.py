@@ -34,5 +34,15 @@ MAX_BLOCK_CHARS = 8000
 # 附件（使用者 @ 進來的檔案內容）截更短，它們對搜尋的價值低但體積大。
 MAX_ATTACHMENT_CHARS = 2000
 
+# Claude Code 會在 %TEMP%\claude\<專案 slug>\<session-id>\scratchpad\ 底下開暫存
+# 工作區，在那裡啟動的 session 會被 Claude Code 記成一個獨立「專案」，slug 長這樣：
+#   C--Users-<user>-AppData-Local-Temp-claude-<專案>-<session-id>-scratchpad-<名字>
+# 那是拋棄式的暫存區不是真專案（實測內容都是 skill eval 的測試探針），預設不納管。
+#
+# 這是本專案唯一「主動放棄留存」的地方 —— 詳見 CLAUDE.md，不要當成 bug 修掉。
+# regex 要求 -Temp-claude- 與 -scratchpad 兩者都命中且有先後順序，
+# 避免誤殺真的叫 scratchpad 的專案。設成空字串即關閉排除、全部納管。
+EXCLUDE_SLUG_RE = os.environ.get("CCSM_EXCLUDE_SLUG_RE", r"-Temp-claude-.*-scratchpad")
+
 # 一次交易內累積多少 block 才 flush
 BATCH_SIZE = 2000

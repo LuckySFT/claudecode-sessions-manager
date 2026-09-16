@@ -464,5 +464,75 @@ class TestResumeCommand(unittest.TestCase):
         self.assertFalse(cmd["resumable"])
 
 
+class TestScratchpadExclusion(TempEnv):
+    """Claude Code 自己的 scratchpad 工作區不納管（config.EXCLUDE_SLUG_RE）。
+
+    這是專案裡唯一「主動放棄留存」的地方，所以正反兩面都要釘住：
+    該排的要排掉，不該排的一個都不能誤殺。
+    """
+
+    SCRATCH = "C--Users-someone-AppData-Local-Temp-claude-d--proj-knowledge-26df356e-552e-498a-b3ed-17f4eafb9013-scratchpad-e2e-proj"
+
+    def _write(self, slug: str, name: str) -> None:
+        d = self.projects / slug
+        d.mkdir(parents=True, exist_ok=True)
+        payload = json.dumps(user_rec("u1", "測試探針"), ensure_ascii=False)
+        (d / (name + ".jsonl")).write_bytes(payload.encode() + b"\n")
+
+    def test_scratchpad_slug_is_excluded(self) -> None:
+        self._write(self.SCRATCH, "s-temp")
+        self.write_session("s-real", [user_rec("u2", "真的工作")])
+        slugs = {sf.project_slug for sf in indexer.discover()}
+        self.assertNotIn(self.SCRATCH, slugs)
+        self.assertIn("proj-a", slugs)
+
+    def test_excluded_session_never_reaches_index(self) -> None:
+        self._write(self.SCRATCH, "s-temp")
+        self.write_session("s-real", [user_rec("u2", "真的工作")])
+        conn = db.connect()
+        try:
+            indexer.reindex(conn)
+            ids = {r["id"] for r in conn.execute("SELECT id FROM sessions")}
+            self.assertEqual(ids, {"s-real"})
+        finally:
+            conn.close()
+
+    def test_subagents_under_scratchpad_are_excluded(self) -> None:
+        sub = self.projects / self.SCRATCH / "s-temp" / "subagents"
+        sub.mkdir(parents=True)
+        payload = json.dumps(user_rec("u1", "子代理"), ensure_ascii=False)
+        (sub / "agent-x.jsonl").write_bytes(payload.encode() + b"\n")
+        self.assertEqual(indexer.discover(), [])
+
+    def test_normal_projects_are_not_killed(self) -> None:
+        """只中一個條件的一律不排除，免得誤殺真的叫 scratchpad 的專案。"""
+        safe = [
+            "d--claudecode-scratchpad",
+            "d--work-my-scratchpad-tool",
+            "C--Users-x-AppData-Local-Temp-claude-d--proj",
+            "d--claudecode-temp-claude-notes",
+        ]
+        for slug in safe:
+            self._write(slug, "s1")
+        slugs = {sf.project_slug for sf in indexer.discover()}
+        for slug in safe:
+            self.assertIn(slug, slugs, "誤殺了 " + slug)
+
+    def test_exclusion_can_be_switched_off(self) -> None:
+        self._write(self.SCRATCH, "s-temp")
+        saved = config.EXCLUDE_SLUG_RE
+        config.EXCLUDE_SLUG_RE = ""
+        try:
+            slugs = {sf.project_slug for sf in indexer.discover()}
+            self.assertIn(self.SCRATCH, slugs)
+        finally:
+            config.EXCLUDE_SLUG_RE = saved
+
+    def test_is_excluded_is_pure(self) -> None:
+        self.assertTrue(indexer.is_excluded(self.SCRATCH))
+        self.assertFalse(indexer.is_excluded("d--claudecode-knowledge"))
+        self.assertFalse(indexer.is_excluded(self.SCRATCH, ""))
+
+
 if __name__ == "__main__":
     unittest.main()

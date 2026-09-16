@@ -140,6 +140,12 @@ session 從索引移除，在沒有備份的情況下等於銷毀唯一副本 �
 砍索引時只砍 `index.db*`，不要整個 `data/` 刪掉。
 （測試若只覆寫 `DATA_DIR` 而忘了 `LABELS_DB_PATH`，會跑去讀寫真正的標籤庫。）
 
+**Claude Code 自己的 scratchpad 不納管。** `%TEMP%\claude\...\scratchpad\` 底下
+啟動的 session 會被記成獨立「專案」，內容是暫時性的測試工作區。預設由
+`config.EXCLUDE_SLUG_RE` 排除，設環境變數 `CCSM_EXCLUDE_SLUG_RE=""` 即可全部納管。
+這是本專案唯一主動放棄留存的地方，判斷條件要求 slug 同時命中 `-Temp-claude-`
+與 `-scratchpad`，避免誤殺真的叫 scratchpad 的專案。
+
 **只綁 127.0.0.1。** 這支服務會把本機所有開發歷程透過 HTTP 吐出來。
 
 **驗證破壞性功能要用隔離實例，不要拿真實資料試。** 三個路徑都可用環境變數覆寫：
