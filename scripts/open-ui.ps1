@@ -40,7 +40,10 @@ param(
     [int]$Port = 8787,
     [switch]$NoBrowser,
     [switch]$Stop,
+    # 強制重新索引。預設本來就會跑增量索引，這個開關只有在想明確表達意圖時才需要。
     [switch]$Reindex,
+    # 跳過索引，只開服務。趕時間或確定索引已是最新時用。
+    [switch]$NoReindex,
     # 用 python.exe 取代 pythonw.exe
     [switch]$UseConsole,
     # 顯示主控台視窗。此時不重導向輸出，日誌會直接印在那個視窗
@@ -170,13 +173,36 @@ foreach ($exe in @($pythonw, $python)) {
 }
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 
+$dbPath = Join-Path $projectRoot 'data\index.db'
+
 if (Test-Port -P $Port) {
     Write-Host "服務已在執行：$url"
+
+    # 服務常態開著，所以「已在執行」這條路徑也必須索引 —— 否則資料會悄悄停在
+    # 最後一次索引的時間點（實際發生過，停了四天才被發現）。
+    # 服務正在寫同一個 DB，這裡不能另起行程去寫，走 API 讓服務自己來。
+    if ($Reindex -or -not $NoReindex) {
+        Write-Host '更新索引中…'
+        try {
+            $r = Invoke-RestMethod -Method Post -Uri "$url/api/reindex" -TimeoutSec 600
+            Write-Host ("索引已更新：掃 {0}、重建 {1}、追加 {2}、略過 {3}" -f `
+                $r.scanned, $r.rebuilt, $r.appended, $r.skipped)
+            if ($r.errors -and $r.errors.Count -gt 0) {
+                Write-Warning "索引有 $($r.errors.Count) 個錯誤：$($r.errors -join '; ')"
+            }
+        } catch {
+            # 索引失敗不該擋住開 UI，舊索引仍可瀏覽
+            Write-Warning "更新索引失敗，將以現有索引開啟：$($_.Exception.Message)"
+        }
+    }
 } else {
-    # 索引不存在就先建，否則服務會直接回 503
-    $dbPath = Join-Path $projectRoot 'data\index.db'
-    if ($Reindex -or -not (Test-Path -LiteralPath $dbPath)) {
-        Write-Host '建立索引中（第一次會花約半分鐘）…'
+    # 索引不存在就非建不可，否則服務會直接回 503
+    if ($Reindex -or -not $NoReindex -or -not (Test-Path -LiteralPath $dbPath)) {
+        if (Test-Path -LiteralPath $dbPath) {
+            Write-Host '更新索引中…'
+        } else {
+            Write-Host '建立索引中（第一次會花約半分鐘）…'
+        }
         $env:PYTHONIOENCODING = 'utf-8'
         & $python -m src.cli index --quiet
         if ($LASTEXITCODE -ne 0) { throw "建立索引失敗（結束碼 $LASTEXITCODE）" }

@@ -13,10 +13,11 @@ rem   Hence %~nx0 below instead of writing the (Chinese) file name literally.
 rem   All Chinese output lives in the PowerShell script, which is UTF-8 + BOM.
 rem
 rem Usage:
-rem   %~nx0                          start if needed, then open the browser
+rem   %~nx0                          update the index, start if needed, open browser
 rem   %~nx0 -Stop                    stop the server
 rem   %~nx0 -Status                  show process tree and listener PID
-rem   %~nx0 -Reindex                 rebuild the index before starting
+rem   %~nx0 -Reindex                 force the index update (same as the default)
+rem   %~nx0 -NoReindex               skip the index update, just open the UI
 rem   %~nx0 -NoBrowser               start only, do not open the browser
 rem   %~nx0 -UseConsole              use python.exe instead of pythonw.exe
 rem   %~nx0 -UseConsole -ShowWindow  visible console, live log output
